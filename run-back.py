@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from backend.route import api
 
 if __name__=='__main__':
