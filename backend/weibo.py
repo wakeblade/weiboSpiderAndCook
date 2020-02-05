@@ -8,8 +8,8 @@ from datetime import datetime,timedelta
 import csv
 import os
 import random
-import re
-import ast
+
+from fastspider import Spider
 
 #用户保存数据
 User = collections.namedtuple('User','id screen_name profile_image_url profile_url gender followers_count follow_count verified_type')
@@ -29,16 +29,13 @@ header ={
 }
 
 Config={
-    'ENTRY_USERID': '1989660417',   #入口用户ID
-    'MIN_FANS': 20000,               #样本最少粉丝数
+    'ENTRY_USERID': '3325704142',   #入口用户ID
+    'MIN_FANS': 10000,               #样本最少粉丝数
     'MAX_FANS': 50000000,           #样本最多粉丝数
-    'MAX_QUEUE':1000,              #样本最少ID数
-    'MAX_IDS':1000,                 #样本最多ID数
-    'MAX_DAYS':30,                   #爬取内容离今天最远天数
-    'ERROR_DELAY':10,               #反爬延迟
-    'PAGE_DELAY':1,                 #单页延迟
-    'RANDOM_SEED':4,               #单页延迟
-    'BUFFER_SIZE':200,        #微博解析缓存
+    'MIN_IDS':5000,                 #样本最少ID数
+    'MAX_IDS':10000,                 #样本最多ID数
+    'MAX_DAYS':7,                   #爬取内容离今天最远天数
+    'BUFFER_SIZE':200,              #微博解析缓存
     #'DB_NEED':1,                   #是否使用数据库
     'DB_TYPE':'mongo',              # 支持mongo & mysql & redis，如果为空则不使用数据库保存数据  
     'DB_CFG':{                      #数据库的连接配置
@@ -53,6 +50,11 @@ Config={
     'URL_WEIBO_FIRST':'https://m.weibo.cn/api/container/getIndex?containerid=107603{}',
     'URL_WEIBO_PAGE':'https://m.weibo.cn/api/container/getIndex?containerid=107603{}&page={}',
 }
+"""
+'ERROR_DELAY':10,               #反爬延迟
+'PAGE_DELAY':1,                 #单页延迟
+'RANDOM_SEED':3,                #单页延迟
+"""
 
 #缓存表
 #用户表
@@ -69,10 +71,6 @@ weibos_buffer ={}
 #计时器
 startTime = time.perf_counter()
 
-#正则表达式，清洗数据
-reHTML=re.compile('</?\w+[^>]*>')
-reClean = re.compile("[^0-9A-Za-z@\u4e00-\u9fa5]")
-
 """
 从txt读取数据，转换成list
 """
@@ -83,9 +81,6 @@ def txt2list(filename):
     return l
 
 valid_ips = txt2list("./valid_ips.txt")
-def randomProxy(proxies):
-    ip = random.choice(proxies)
-    return {'https':ip,'http':ip}
 
 """
 保存字典数据为csv
@@ -93,26 +88,8 @@ def randomProxy(proxies):
 def dict2csv(filename,m,d):
     with open(filename,m,encoding='UTF-8',newline='') as f:
         fw =csv.writer(f)
-        #fw.writerow(['id','follows'])
-        for k,v in d.items():
-            fw.writerow([k,v])
+        fw.writerows(d)
         f.close()
-
-"""
-从csv读取字典数据
-"""
-def csv2dict(filename):
-    d={}
-    if not os.path.exists(filename):
-        return d
-
-    with open(filename,'r',encoding='UTF-8') as f:
-        fr =csv.reader(f)
-        for i in fr:
-            if(len(i)>0):
-                d[i[0]]=ast.literal_eval(i[1])
-        f.close()
-    return d
 
 """
 保存爬取的数据为csv
@@ -131,21 +108,18 @@ def ntdict2csv(filename,d,NT):
 从csv读取数据，转换成NamedTuple字典
 """
 def csv2ntdict(filename,NT):
-    d={}
     if not os.path.exists(filename):
-        return d
+        return {}
 
+    d={}
     with open(filename,'r',encoding='UTF-8') as f:
         fr =csv.reader(f)
         next(fr)
         for i in fr:
-            #print("i-{}".format(i))
+            #print(i)
             if(len(i)>0):
                 nt = NT(*i)
-                if(nt.id in d):
-                    print("id-{}重复".format(nt.id))
-                else:
-                    d[nt.id]=nt
+                d[nt.id]=nt
         f.close()
     return d
 
@@ -157,7 +131,7 @@ def parseUser(js):
     #print('t=========',js)
     #print('t.keys()=========',js.keys())
     user =User(
-        str(js['user']['id']),
+        js['user']['id'],
         js['user']['screen_name'],
         js['user']['profile_image_url'],
         js['user']['profile_url'],
@@ -176,7 +150,7 @@ def isUserNeedToAdd(user):
         return False
     if(user.followers_count<int(Config['MIN_FANS']) or user.followers_count>int(Config['MAX_FANS'])):
         return False
-    if(user.id in tb_users or user.id in users_buffer):
+    if(user.id in tb_users):
         return False
     return True
 
@@ -192,28 +166,17 @@ def addFollow(userid,followid):
 获取某个用户ID的Follows
 """
 def spiderId(userId):
-    global tb_users,users_buffer,ids_queue,ids_history
+    spider =Spider(header=header)
+    global users_buffer
     #print("userId==========",userId)
     #获取关注者列表
     url = Config['URL_FOLLOWS_FIRST'].format(userId)
     #print("url==========",url)
 
     """抓取关注列表第一页,计算分页数和全部关注的位置"""
-    delay=random.randint(1,Config['RANDOM_SEED'])
-    while True:
-        try:
-            print('(延迟{}s)========={}'.format(delay,url))
-            js = requests.get(url,headers=header,timeout=(3,3)).json()
-        except Exception as e:
-            delay+=1
-            time.sleep(delay*Config['ERROR_DELAY'])
-        else:
-            time.sleep(delay*Config['PAGE_DELAY'])
-            break
-    #js = requests.get(url,headers=header,timeout=(3,3)).json()
+    # js = requests.get(url,headers=header).json()
+    js = spider.url(url).json()
     #print("==========js==========",js)
-    if 'cardlistInfo' not in js['data']:
-        return
     total_follows = js['data']['cardlistInfo']['total']
     #print("==========follow_total==========",follow_total)
     page_follows = len(js['data']['cards'][-1]['card_group'])
@@ -226,23 +189,10 @@ def spiderId(userId):
     #all_follows_index = len(js['data']['cards'])
 
     p=1
-    params={'headers':header,'timeout':(3,3)}
     while p<=total_pages:
-        #print('users_buffer{}|tb_users{}============='.format(len(users_buffer),len(tb_users)))
         url = Config['URL_FOLLOWS_PAGE'].format(userId,str(p))
-        #print(url)
-        delay=random.randint(1,Config['RANDOM_SEED'])
-        while True:
-            try:
-                print('{}/{}页开始(延迟{}s)========={}'.format(str(p),str(total_pages),str(delay),url))
-                js = requests.get(url,**params).json()                
-            except Exception as e:
-                delay+=1
-                #params['proxies']=randomProxy(valid_ips)
-                time.sleep(delay*Config['ERROR_DELAY'])
-            else:
-                time.sleep(delay*Config['PAGE_DELAY'])
-                break
+        print('页面：{}/{}==========='.format(str(p),str(total_pages)))
+        js = spider.url(url).json()                
         #print("len(js['data']['cards'])====",len(js['data']['cards']))
         count=0
         if js['data']['cards']:
@@ -252,13 +202,12 @@ def spiderId(userId):
                 user =parseUser(f)
                 if(isUserNeedToAdd(user)):
                     users_buffer[user.id]=user
-                    print('user{}/{}({}s)==========={}-{}-{}'.format(str(len(ids_queue)),str(len(tb_users)),int(time.perf_counter()-startTime),user.screen_name,user.verified_type,user.followers_count))
+                    print('user{}/{}({}s)==========={}-{}'.format(str(len(ids_queue)),str(len(tb_users)),int(time.perf_counter()-startTime),user.screen_name,user.verified_type))
                     #保存粉丝关系
                     addFollow(userId,user.id)
-                    #print('tb_follows===========',tb_follows)
                     #print('ids_queue===========',ids_queue)
                     #print('ids_history===========',ids_history)
-                    if (user.id not in ids_queue) and (user.id not in ids_history) and len(ids_queue)<Config['MAX_QUEUE']:
+                    if (user.id not in ids_queue) and (user.id not in ids_history):
                         ids_queue.append(user.id)
                         #print('user{}==========='.format(str(len(tb_users))),user)
                     count+=1
@@ -267,7 +216,6 @@ def spiderId(userId):
             ntdict2csv("./tb_users.csv",users_buffer,User)
             tb_users.update(users_buffer)
             users_buffer={}
-            dict2csv("./tb_follows.csv",'w+',tb_follows)
             print('已爬取用户{}============='.format(len(tb_users)))
         p+=1
     if(userId not in ids_history):
@@ -277,12 +225,10 @@ def spiderId(userId):
 获取符合条件的所有微博ID样本
 """
 def spiderIds():
-    [ids_queue.append(userid) for userid in tb_users]
-    random.shuffle(ids_queue)
     while (len(ids_queue)>0 and len(tb_users)<int(Config['MAX_IDS'])):
         userId = ids_queue.pop()
         spiderId(userId)
-    ntdict2csv("./tb_users.csv",users_buffer,User)
+    ntdict2csv("./tb_users.csv",tb_users,User)
     dict2csv("./tb_follows.csv",'w+',tb_follows)
 
 """
@@ -296,8 +242,8 @@ def parseWeibo(js):
         js['itemid'],
         js['scheme'],
         repaireDate(js['mblog']['created_at']),
-        str(js['mblog']['id']),
-        reClean.sub('',reHTML.sub(' ',js['mblog']['text'])),
+        js['mblog']['id'],
+        js['mblog']['text'],
         #js['mblog']['textLength'],
         js['mblog']['user']['id'],
         js['mblog']['reposts_count'],
@@ -336,7 +282,7 @@ def repaireDate(created_at):
 def isWeiboNeedToAdd(weibo):
     if(weibo.id in tb_weibos or weibo.id in weibos_buffer):
         return False
-    if((datetime.now()- datetime.strptime(weibo.created_at,'%Y-%m-%d')).days>int(Config['MAX_DAYS'])):
+    if((datetime.now()- datetime.strptime(weibo.created_at,'%Y-%m-%d')).days<int(Config['MAX_DAYS'])):
         return False
     return True
 
@@ -344,56 +290,28 @@ def isWeiboNeedToAdd(weibo):
 获取某个用户ID的Follows
 """
 def spiderWeibo(userId):
-    global tb_weibos,weibos_buffer
+    spider =Spider(header=header)
+    global weibos_buffer
     #print("userId==========",userId)
     #获取关注者列表
     url = Config['URL_WEIBO_FIRST'].format(userId)
     #print("url==========",url)
 
     """抓取关注列表第一页,计算分页数和全部关注的位置"""
-    delay=random.randint(1,Config['RANDOM_SEED'])
-    while True:
-        try:
-            print('(延迟{}s)========={}'.format(delay,url))
-            js = requests.get(url,headers=header,timeout=(3,3)).json()
-        except Exception as e:
-            delay+=1
-            time.sleep(delay*Config['ERROR_DELAY'])
-        else:
-            time.sleep(delay*Config['PAGE_DELAY'])
-            break
-    #js = requests.get(url,headers=header,timeout=(3,3)).json()
+    js = spider.url(url).json()
     #print("==========js==========",js)
-    
-    if 'cardlistInfo' not in js['data']:
-        return
-
     total_weibos = js['data']['cardlistInfo']['total']
     #print("==========total_weibos==========",total_weibos)
     page_weibos = len(js['data']['cards'])
     #print("==========page_follows_number==========",page_follows_number)
-    if page_weibos and total_weibos:
-        total_pages = total_weibos // page_weibos
-    else:
-        total_pages =  0 
+    total_pages = total_weibos // page_weibos
 
     p=1
     count=0
     while p<=total_pages:
         url = Config['URL_WEIBO_PAGE'].format(userId,str(p))
-        #print(url)
-        countTmp=count
-        delay=random.randint(1,Config['RANDOM_SEED'])
-        while True:
-            try:
-                print('{}/{}页开始(延迟{}s)========={}'.format(p,total_pages,delay,url))
-                js = requests.get(url,headers=header,timeout=(3,3)).json()                
-            except Exception as e:
-                delay+=1
-                time.sleep(delay*Config['ERROR_DELAY'])
-            else:
-                time.sleep(delay*Config['PAGE_DELAY'])
-                break
+        print('页面：{}/{}==========='.format(str(p),str(total_pages)))
+        js = spider.url(url).json()                
         #print("len(js['data']['cards'])====",len(js['data']['cards']))
         #print(js['data']['cards'])
         for f in js['data']['cards']:
@@ -405,16 +323,13 @@ def spiderWeibo(userId):
                 weibos_buffer[weibo.id]=weibo
                 #print('weibo {}/{}==========='.format(str(count),str(total_weibos)),weibo)
                 print('weibo {}/{}({}s)==========='.format(str(count),str(total_weibos),int(time.perf_counter()-startTime)))
-                count+=1
+            count+=1
         if(len(weibos_buffer)>Config['BUFFER_SIZE']):
             ntdict2csv("./tb_weibos.csv",weibos_buffer,Weibo)
             tb_weibos.update(weibos_buffer)
             weibos_buffer={}
-            print('已爬取微博{}/队列{}============='.format(len(tb_weibos),len(weibos_buffer)))
-        if countTmp==count:
-            break
-        else:
-            p+=1
+            print('已爬取微博{}============='.format(len(tb_weibos)))
+        p+=1
 
 """
 获取符合条件的所有微博ID样本
@@ -475,17 +390,9 @@ def getPostUrl(postId):
 if __name__=='__main__':
     #入口用户ID
     tb_users = csv2ntdict("./tb_users.csv",User)
-    tb_follows = csv2dict("./tb_follows.csv")
-    """
-    print(len(tb_users))
-    i=0
-    for user in tb_users.values():
-        i+=1
-        print("{}-{}-{}".format(i,user.id,user.screen_name))
-    """
-    #print(tb_users['1242213702'])
     #print(tb_users)
-    spiderIds()
+    #spiderIds()
 
     tb_weibos = csv2ntdict("./tb_weibos.csv",Weibo)
+    #print(tb_weibos)
     spiderWeibos()
