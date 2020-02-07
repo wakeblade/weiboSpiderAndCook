@@ -102,3 +102,4 @@ for hotword in hotwords.index:
     count+=1
     plt.xticks(rotation=30)
 plt.legend() 
+plt.show()
