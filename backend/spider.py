@@ -427,7 +427,7 @@ def spiderWeibos():
         spiderWeibo(id)
         count+=1
         print('已爬取人数{}/{}============='.format(count,len(userids)))
-    ntdict2csv("./tb_weibos.csv",tb_weibos,Weibo)
+    ntdict2csv("./tb_weibos.csv",weibos_buffer,Weibo)
 
 ##############################################################
 def get_json(url, params):
