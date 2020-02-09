@@ -35,7 +35,7 @@ Config={
     'MAX_QUEUE':1000,              #样本最少ID数
     'MAX_IDS':1000,                 #样本最多ID数
     'MAX_DAYS':30,                   #爬取内容离今天最远天数
-    'ERROR_DELAY':10,               #反爬延迟
+    'ERROR_DELAY':5,               #反爬延迟
     'PAGE_DELAY':1,                 #单页延迟
     'RANDOM_SEED':4,               #单页延迟
     'BUFFER_SIZE':200,        #微博解析缓存
@@ -141,11 +141,14 @@ def csv2ntdict(filename,NT):
         for i in fr:
             #print("i-{}".format(i))
             if(len(i)>0):
-                nt = NT(*i)
-                if(nt.id in d):
-                    print("id-{}重复".format(nt.id))
-                else:
-                    d[nt.id]=nt
+                try:
+                    nt = NT(*i)
+                    if(nt.id in d):
+                        print("id-{}重复".format(nt.id))
+                    else:
+                        d[nt.id]=nt
+                except Exception as e:
+                    print(f"nt = NT(*i)={i}转换失败")
         f.close()
     return d
 

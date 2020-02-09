@@ -65,41 +65,61 @@ def daywords(value):
     return Counter(result).most_common(10000)
 
 daywords = [(index,word,count) for index,value in documents.groupby('created_at')['words'] for word,count in daywords(value)]
-daywords = pd.DataFrame(columns=['created_at','word','count'],data=daywords)
-#daywords
+daywordCounts = pd.DataFrame(columns=['created_at','word','count'],data=daywords)
+daywordCounts.sort_values(['created_at','count'],ascending=[True,False],inplace=True)
+#daywordCounts
 
-# <b>对总词袋的每个词汇计算30日总文档频率，并且排序，选取TOP20</b>
-
-hotwordsAll = daywords.groupby(['word'])['count'].sum()
-hotwords = hotwordsAll.sort_values(ascending=False)[0:19]
-#hotwords 
+# <b>对每日文档频率取TOP2，汇总成热点词。然后为热点词日词频建立时间序列</b>
+hotwordCounts = daywordCounts.groupby(['created_at']).head(2)
+days = hotwordCounts['created_at'].unique()
+hotwords = hotwordCounts.sort_values(['created_at','count'],ascending=[False,False])['word'].unique()
+wordCounts = pd.DataFrame(index=days,columns=hotwords)
+for hotword in hotwords:
+    value = daywordCounts[daywordCounts.word==hotword][['created_at','count']]
+    value.set_index('created_at',inplace=True)
+    #print(value)
+    wordCounts[hotword] = value
+wordCounts.fillna(1,inplace=True)
+#wordCounts
 
 # <b>利用Matplotlib画出这TOP20热点词的日文档频率的变化曲线，分析理解其意义</b>
-hotwordcounts = daywords[daywords['word'].isin(hotwords.index)]
-#hotwordcounts
-
 import matplotlib.pyplot as plt
+#get_ipython().run_line_magic('matplotlib', 'inline')
 import random
+import scipy.interpolate
+from scipy.interpolate import interp1d
 import numpy as np
+import talib
 
 # 支持中文
 plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
 plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
-
-# 显示图例
-plt.figure(figsize=(13,7), dpi=180)
+plt.figure(figsize=(12,8), dpi=180)
 plt.subplot(1,1,1)
 markers=".,ov^<>1234sp*hH+xDd|_"
-count = 0
-for hotword in hotwords.index:
-    #print(f"hotword={hotword}")
-    values = hotwordcounts.loc[hotwordcounts['word']==hotword][['created_at','count']]
-    #print(f"values={values}")
-    values.set_index('created_at',inplace=True)
-    y = values['count'].rolling(3).mean()
-    plt.plot(values.index,y,marker=random.choice(markers),label=hotword)
+count = len(markers)-1
+for hotword in hotwords:
+    x = wordCounts.index
+    y = wordCounts[hotword]
+    #y = wordCounts[hotword].rolling(2).mean()
+    #y = talib.EMA(wordCounts[hotword],2)
+
     #plt.plot(values.index,y,marker=markers[count%len(markers)],label=hotword)
-    count+=1
-    plt.xticks(rotation=30)
-plt.legend() 
+    #plt.plot(wordCounts.index,wordCounts[hotword],marker=random.choice(markers),label=hotword)
+    plt.plot(x,y,marker=markers[count%len(markers)],label=hotword)
+    #plt.plot(x,y,marker=random.choice(markers),label=hotword)
+    #plt.plot(x,y,label=hotword)
+    count-=1
+
+    """
+    x = np.array([i for i in range(len(values.index))])
+    print(f"x({len(x)})={x}")
+    y = np.array(values['count'])
+    print(f"y({len(y)})={y}")
+    func = interp1d(x, y, kind = 'cubic')
+    xx = np.linspace(x.min(),x.max(),30) 
+    plt.plot(xx,func(xx),marker=random.choice(markers),label=str(index))
+    """
+    plt.xticks(rotation=60)
+plt.legend() # 显示图例
 plt.show()
